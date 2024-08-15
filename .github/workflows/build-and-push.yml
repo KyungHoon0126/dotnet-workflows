@@ -1,0 +1,63 @@
+name: Build and Push (Nuget)
+on:
+  workflow_call:
+    inputs:
+      projectFileName:
+        description: "Project File Name"
+        type: string
+        required: true
+      projectConfiguration:
+        description: "Project Configuration"
+        type: string
+        required: false
+        default: 'Release'
+      dotnetVersion:
+        description: 'Specify the .NET or .NET Framework version (e.g. "net48", "net6.0")'
+        type: string
+        required: true
+
+env:
+  PROJECT_FILE_NAME: ${{ inputs.projectFileName }}
+  PROJECT_CONFIGURATION: ${{ inputs.projectConfiguration }}
+  DOTNET_VERSION: ${{ inputs.dotnetVersion }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          6.0.x
+          ${{ env.DOTNET_VERSION }}
+
+    - name: Update Github Nuget Source
+      run: dotnet nuget update source github -u ${{ secrets.NUGET_PACKAGE_ID }} -p ${{ secrets.NUGET_PACKAGE_PAT }} --store-password-in-clear-text
+
+    - name: Restore Nuget
+      run: dotnet restore ${{ env.PROJECT_FILE_NAME }}/${{ env.PROJECT_FILE_NAME }}.csproj
+
+    - name: Cache NuGet
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+          max-age: 30d
+
+    - name: Build Project
+      run: dotnet build ${{ env.PROJECT_FILE_NAME }}/${{ env.PROJECT_FILE_NAME }}.csproj --configuration ${{ env.PROJECT_CONFIGURATION }}
+
+    - name: Upload NuGet package as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-package
+        path: ${{ env.PROJECT_FILE_NAME }}/bin/${{ env.PROJECT_CONFIGURATION }}/*.nupkg
+
+    - name: Publish Nuget
+      run: dotnet nuget push "${{ github.workspace }}${{ env.PROJECT_FILE_NAME }}/bin/${{ env.PROJECT_CONFIGURATION }}/*.nupkg" --api-key ${{ secrets.NUGET_PACKAGE_PAT }} --source "github" --skip-duplicate
